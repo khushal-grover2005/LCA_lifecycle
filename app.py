@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import sys
 import os
-from src.pipeline.predictpipeline import PredictPipeline, CustomData
+from src.pipeline.predictpipeline import PredictPipeline
 from src.exception import CustomException
 from src.logger import logging
 
