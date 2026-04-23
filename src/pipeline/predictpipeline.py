@@ -88,45 +88,50 @@ class PredictPipeline:
 
     def predict(self, features):
         try:
-            # 1. Create a Full Template of all 42 columns
-            # This ensures even if user sends 1 value, the DataFrame structure is correct
-            all_columns = self.df.columns.tolist()
-            
-            # Remove targets if they exist in your CSV columns
-            targets = ['gwp_total', 'circularity_index']
-            all_columns = [col for col in all_columns if col not in targets]
-            
-            # Create a blank DataFrame with the correct column order
+            # 1. TEMPLATE LOGIC: Create a template of all 42 expected columns
+            # This ensures even a single-value JSON doesn't crash the preprocessor
+            all_columns = [col for col in self.df.columns if col not in ['gwp_total', 'circularity_index']]
             template_df = pd.DataFrame(columns=all_columns)
             
-            # 2. Re-align user input into the template
-            # This places the user's 1 (or more) value into the right column 
-            # and fills the rest with NaN/None
-            full_input_df = pd.concat([template_df, features], axis=0, sort=False).reset_index(drop=True)
-            
-            # Keep only the last row (the actual user data combined with the template)
-            full_input_df = full_input_df.tail(1)
+            # Align user input into the template (fills missing columns with NaN)
+            full_input_df = pd.concat([template_df, features], axis=0, sort=False).tail(1).reset_index(drop=True)
 
-            # 3. Estimate missing parameters (The Expert System)
-            # This will see the NaNs and fill them with medians based on the Metal/Route
+            # 2. EXPERT IMPUTATION: Fill based on Metal and Production Route context
+            # This fills the NaNs using medians/modes from your specific LCA dataset
             filled_features = self.estimate_missing_params(full_input_df)
 
-            # 4. Load Artifacts
+            # 3. ZERO-NaN SAFETY NET: Mandatory for ElasticNet/Linear Models
+            # If any value is STILL NaN (due to empty context), fill with global median/mode
+            for col in filled_features.columns:
+                if filled_features[col].isnull().any():
+                    if self.df[col].dtype in [np.float64, np.int64]:
+                        global_median = self.df[col].median()
+                        filled_features[col] = filled_features[col].fillna(global_median if not pd.isna(global_median) else 0)
+                    else:
+                        global_mode = self.df[col].mode()
+                        filled_features[col] = filled_features[col].fillna(global_mode[0] if not global_mode.empty else "unknown")
+
+            # Final check to catch any lingering edge-case NaNs
+            filled_features = filled_features.fillna(0)
+
+            # 4. LOAD ARTIFACTS
             model_gwp = load_object(os.path.join("artifacts", "gwp_model.pkl"))
             model_circ = load_object(os.path.join("artifacts", "circularity_model.pkl"))
             preprocessor = load_object(os.path.join("artifacts", "preprocessor.pkl"))
 
-            # 5. Transform and Predict
-            # Now preprocessor is happy because it sees all 42 expected columns
+            # 5. TRANSFORM AND PREDICT
+            logging.info("Transforming 42-parameter profile for model inference...")
             data_scaled = preprocessor.transform(filled_features)
             
+            # GWP Prediction (Assumes log transformation was used during training)
             gwp_pred = model_gwp.predict(data_scaled)
-            # Invert log scaling if your model was trained on log(y)
             gwp_final = np.expm1(gwp_pred)[0] 
             
+            # Circularity Prediction
             circularity_final = model_circ.predict(data_scaled)[0]
 
-            # 6. Generate Visualization and Technical Profile
+            # 6. GENERATE VISUALIZATION AND PROFILE
+            # Uses your original logic to split the GWP into Sankey nodes
             sankey_data = self.calculate_sankey_flows(gwp_final, filled_features)
             profile = filled_features.to_dict(orient='records')[0]
 
@@ -138,4 +143,5 @@ class PredictPipeline:
             }
 
         except Exception as e:
+            logging.error(f"Error in PredictPipeline: {str(e)}")
             raise CustomException(e, sys)
