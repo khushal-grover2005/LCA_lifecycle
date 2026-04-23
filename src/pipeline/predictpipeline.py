@@ -10,45 +10,88 @@ class PredictPipeline:
     def __init__(self):
         pass
 
-    def predict(self, features):
+    def calculate_sankey_flows(self, total_gwp, input_df):
         """
-        Takes processed features and returns predictions for both GWP and Circularity.
+        Logic to split total GWP into nodes based on input features for visualization.
         """
         try:
-            # Define paths to our saved artifacts
+            # Standard baseline weights
+            upstream_w = 0.35
+            production_w = 0.55
+            transport_w = 0.10
+
+            # Dynamic adjustments based on specific inputs
+            # 1. Check Production Route
+            route = input_df['production_route'].iloc[0]
+            if route == 'Primary':
+                upstream_w += 0.20
+                production_w -= 0.20
+            elif route == 'Secondary':
+                upstream_w -= 0.15
+                production_w += 0.15
+
+            # 2. Check Transport Distance
+            dist = input_df['transport_distance_km'].iloc[0]
+            if dist > 3000:
+                shift = 0.15
+                transport_w += shift
+                upstream_w -= (shift / 2)
+                production_w -= (shift / 2)
+
+            # Ensure weights remain realistic (minimum 5% per node)
+            upstream_w = max(0.05, upstream_w)
+            production_w = max(0.05, production_w)
+            transport_w = max(0.05, transport_w)
+
+            # Calculate flow values
+            upstream_val = round(total_gwp * upstream_w, 4)
+            production_val = round(total_gwp * production_w, 4)
+            transport_val = round(total_gwp * transport_w, 4)
+
+            # Construct Sankey JSON structure
+            sankey_data = [
+                {"source": "Raw Material Extraction", "target": "Metal Production", "value": upstream_val},
+                {"source": "Energy & Processing", "target": "Metal Production", "value": production_val},
+                {"source": "Logistics & Transport", "target": "Metal Production", "value": transport_val},
+                {"source": "Metal Production", "target": "Finished Product", "value": round(total_gwp, 4)}
+            ]
+            return sankey_data
+        except Exception as e:
+            raise CustomException(e, sys)
+
+    def predict(self, features):
+        try:
             model_gwp_path = os.path.join("artifacts", "gwp_model.pkl")
             model_circ_path = os.path.join("artifacts", "circularity_model.pkl")
             preprocessor_path = os.path.join("artifacts", "preprocessor.pkl")
 
-            logging.info("Loading models and preprocessor...")
             model_gwp = load_object(file_path=model_gwp_path)
             model_circ = load_object(file_path=model_circ_path)
             preprocessor = load_object(file_path=preprocessor_path)
 
-            # Transform the user input using the saved preprocessor
+            logging.info("Transforming input features...")
             data_scaled = preprocessor.transform(features)
 
-            # Predict GWP (Note: This is in Log scale from training)
+            # Predict GWP and Invert Log Scale
             gwp_log_pred = model_gwp.predict(data_scaled)
-            # Convert back from Log scale to actual kg CO2/kg
-            gwp_final = np.expm1(gwp_log_pred)
+            gwp_final = np.expm1(gwp_log_pred)[0]
 
-            # Predict Circularity Index (Already in 0-1 scale)
-            circularity_pred = model_circ.predict(data_scaled)
+            # Predict Circularity
+            circularity_pred = model_circ.predict(data_scaled)[0]
+
+            # Generate Sankey Visualization Logic
+            sankey_data = self.calculate_sankey_flows(gwp_final, features)
 
             return {
-                "gwp": round(float(gwp_final[0]), 4),
-                "circularity": round(float(circularity_pred[0]), 4)
+                "gwp": round(float(gwp_final), 4),
+                "circularity": round(float(circularity_pred), 4),
+                "sankey_data": sankey_data
             }
 
         except Exception as e:
             raise CustomException(e, sys)
 
 class CustomData:
-    """
-    This class is responsible for mapping the HTML/API inputs to the 
-    exact column names expected by the DataTransformation object.
-    """
     def __init__(self, 
                  metal: str, production_route: str, region: str, 
                  energy_mix: str, transport_mode: str, transport_distance_km: float,
