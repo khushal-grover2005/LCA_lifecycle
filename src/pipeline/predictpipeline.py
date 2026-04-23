@@ -12,32 +12,46 @@ class PredictPipeline:
         self.df = pd.read_csv(os.path.join("data", "lca_metals_final.csv"))
 
     def estimate_missing_params(self, input_df):
-        """
-        Objective: Use the dataset to fill blank user inputs 
-        based on specific Metal and Production Route context.
-        """
         try:
+            # 1. Identify Context
             metal = input_df['metal'].iloc[0]
             route = input_df['production_route'].iloc[0]
 
-            # Filter dataset for context
+            # 2. Get Contextual Data from your 42-column CSV
             context_df = self.df[(self.df['metal'] == metal) & (self.df['production_route'] == route)]
+            
+            # Fallback if specific route doesn't exist for that metal
             if context_df.empty:
                 context_df = self.df[self.df['metal'] == metal]
+            
+            # Global fallback if the metal itself isn't found (safety first)
+            if context_df.empty:
+                context_df = self.df
 
-            # Fill blanks/zeros using median/mode
+            # 3. Fill EVERYTHING that is NaN/Blank/Zero
             for col in input_df.columns:
-                val = input_df[col].iloc[0]
-                if val in [None, "", 0, 0.0, "unknown"]:
+                # Check if value is NaN or null
+                if pd.isna(input_df[col].iloc[0]) or input_df[col].iloc[0] in [None, "", 0, 0.0, "unknown"]:
+                    
+                    # Fill numeric columns with Median
                     if self.df[col].dtype in [np.float64, np.int64]:
-                        input_df[col] = context_df[col].median()
+                        val = context_df[col].median()
+                        # If context median is still NaN, use global median
+                        input_df[col] = val if not pd.isna(val) else self.df[col].median()
+                    
+                    # Fill categorical columns with Mode
                     else:
-                        input_df[col] = context_df[col].mode()[0]
+                        mode_vals = context_df[col].mode()
+                        if not mode_vals.empty:
+                            input_df[col] = mode_vals[0]
+                        else:
+                            # Global mode fallback
+                            input_df[col] = self.df[col].mode()[0]
             
             return input_df
         except Exception as e:
             raise CustomException(e, sys)
-
+        
     def calculate_sankey_flows(self, total_gwp, input_df):
         """
         Logic to split total GWP into nodes based on input features.
