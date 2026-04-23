@@ -9,4 +9,5 @@ flask
 dill
 uvicorn
 python-dotenv
+flask-cors
 -e .
