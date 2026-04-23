@@ -74,20 +74,45 @@ class PredictPipeline:
 
     def predict(self, features):
         try:
-            # 1. Estimate missing parameters (Interface Level)
-            filled_features = self.estimate_missing_params(features)
+            # 1. Create a Full Template of all 42 columns
+            # This ensures even if user sends 1 value, the DataFrame structure is correct
+            all_columns = self.df.columns.tolist()
+            
+            # Remove targets if they exist in your CSV columns
+            targets = ['gwp_total', 'circularity_index']
+            all_columns = [col for col in all_columns if col not in targets]
+            
+            # Create a blank DataFrame with the correct column order
+            template_df = pd.DataFrame(columns=all_columns)
+            
+            # 2. Re-align user input into the template
+            # This places the user's 1 (or more) value into the right column 
+            # and fills the rest with NaN/None
+            full_input_df = pd.concat([template_df, features], axis=0, sort=False).reset_index(drop=True)
+            
+            # Keep only the last row (the actual user data combined with the template)
+            full_input_df = full_input_df.tail(1)
 
-            # 2. Load Artifacts
+            # 3. Estimate missing parameters (The Expert System)
+            # This will see the NaNs and fill them with medians based on the Metal/Route
+            filled_features = self.estimate_missing_params(full_input_df)
+
+            # 4. Load Artifacts
             model_gwp = load_object(os.path.join("artifacts", "gwp_model.pkl"))
             model_circ = load_object(os.path.join("artifacts", "circularity_model.pkl"))
             preprocessor = load_object(os.path.join("artifacts", "preprocessor.pkl"))
 
-            # 3. Predict
+            # 5. Transform and Predict
+            # Now preprocessor is happy because it sees all 42 expected columns
             data_scaled = preprocessor.transform(filled_features)
-            gwp_final = np.expm1(model_gwp.predict(data_scaled))[0]
+            
+            gwp_pred = model_gwp.predict(data_scaled)
+            # Invert log scaling if your model was trained on log(y)
+            gwp_final = np.expm1(gwp_pred)[0] 
+            
             circularity_final = model_circ.predict(data_scaled)[0]
 
-            # 4. Generate Visualization and Technical Profile
+            # 6. Generate Visualization and Technical Profile
             sankey_data = self.calculate_sankey_flows(gwp_final, filled_features)
             profile = filled_features.to_dict(orient='records')[0]
 
@@ -97,5 +122,6 @@ class PredictPipeline:
                 "sankey_data": sankey_data,
                 "full_profile": profile
             }
+
         except Exception as e:
             raise CustomException(e, sys)
