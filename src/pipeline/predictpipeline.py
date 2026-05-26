@@ -54,7 +54,8 @@ class PredictPipeline:
         
     def calculate_sankey_flows(self, total_gwp, input_df):
         """
-        Logic to split total GWP into nodes based on input features.
+        Logic to split total GWP into nodes based on input features for visualization.
+        Formatted specifically for Nivo Sankey (nodes array and index-based links).
         """
         try:
             upstream_w, production_w, transport_w = 0.35, 0.55, 0.10
@@ -75,14 +76,30 @@ class PredictPipeline:
                 upstream_w -= (shift / 2)
                 production_w -= (shift / 2)
 
-            upstream_w, production_w, transport_w = max(0.05, upstream_w), max(0.05, production_w), max(0.05, transport_w)
+            upstream_w = max(0.05, upstream_w)
+            production_w = max(0.05, production_w)
+            transport_w = max(0.05, transport_w)
 
-            return [
-                {"source": "Raw Material Extraction", "target": "Metal Production", "value": round(total_gwp * upstream_w, 4)},
-                {"source": "Energy & Processing", "target": "Metal Production", "value": round(total_gwp * production_w, 4)},
-                {"source": "Logistics & Transport", "target": "Metal Production", "value": round(total_gwp * transport_w, 4)},
-                {"source": "Metal Production", "target": "Finished Product", "value": round(total_gwp, 4)}
+            # 🌟 REQUIRED NIVO FORMAT 🌟
+            nodes = [
+                {"name": "Raw Material Extraction"}, # Index 0
+                {"name": "Energy & Processing"},     # Index 1
+                {"name": "Logistics & Transport"},   # Index 2
+                {"name": "Metal Production"},        # Index 3
+                {"name": "Finished Product"}         # Index 4
             ]
+
+            links = [
+                {"source": 0, "target": 3, "value": round(total_gwp * upstream_w, 4)},
+                {"source": 1, "target": 3, "value": round(total_gwp * production_w, 4)},
+                {"source": 2, "target": 3, "value": round(total_gwp * transport_w, 4)},
+                {"source": 3, "target": 4, "value": round(total_gwp, 4)}
+            ]
+
+            return {
+                "nodes": nodes,
+                "links": links
+            }
         except Exception as e:
             raise CustomException(e, sys)
 
@@ -144,4 +161,41 @@ class PredictPipeline:
 
         except Exception as e:
             logging.error(f"Error in PredictPipeline: {str(e)}")
+            raise CustomException(e, sys)
+
+class CustomData:
+    def __init__(self, 
+                 metal: str, production_route: str, region: str, 
+                 energy_mix: str, transport_mode: str, transport_distance_km: float,
+                 energy_mj_per_kg: float, typical_lifespan_years: int,
+                 recycled_content_pct: float, eol_recovery_pct: float,
+                 application: str, end_of_life_scenario: str,
+                 pathway_type: str, circular_flow_type: str,
+                 life_cycle_stage: str, co2_capture_used: str,
+                 year: int, facility_age_years: int, batch_size_tonnes: float,
+                 global_recycling_rate_pct: float, reuse_potential_score: float,
+                 material_efficiency_score: float, human_toxicity_score: float,
+                 eutrophication_potential: float):
+
+        self.data_dict = {
+            "metal": [metal], "production_route": [production_route], "region": [region],
+            "energy_mix": [energy_mix], "transport_mode": [transport_mode],
+            "transport_distance_km": [transport_distance_km], "energy_mj_per_kg": [energy_mj_per_kg],
+            "typical_lifespan_years": [typical_lifespan_years], "recycled_content_pct": [recycled_content_pct],
+            "eol_recovery_pct": [eol_recovery_pct], "application": [application],
+            "end_of_life_scenario": [end_of_life_scenario], "pathway_type": [pathway_type],
+            "circular_flow_type": [circular_flow_type], "life_cycle_stage": [life_cycle_stage],
+            "co2_capture_used": [co2_capture_used], "year": [year],
+            "facility_age_years": [facility_age_years], "batch_size_tonnes": [batch_size_tonnes],
+            "global_recycling_rate_pct": [global_recycling_rate_pct],
+            "reuse_potential_score": [reuse_potential_score],
+            "material_efficiency_score": [material_efficiency_score],
+            "human_toxicity_score": [human_toxicity_score],
+            "eutrophication_potential": [eutrophication_potential]
+        }
+
+    def get_data_as_data_frame(self):
+        try:
+            return pd.DataFrame(self.data_dict)
+        except Exception as e:
             raise CustomException(e, sys)
